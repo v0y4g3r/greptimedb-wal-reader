@@ -1,4 +1,4 @@
-# raft-engine-strings
+# wal-reader
 
 `wal-reader` is a small Rust CLI for inspecting `raft-engine` WAL directories used by GreptimeDB. It can list raft namespaces, inspect WAL entries for a namespace, and decode GreptimeDB WAL payloads into readable text or JSON.
 
@@ -6,7 +6,7 @@ The tool is useful when you have a local raft-engine WAL directory and need to u
 
 ## Project Structure
 
-- `Cargo.toml` - Rust package metadata and dependencies, including `raft-engine`, `greptime-proto`, and Arrow IPC/JSON decoding support.
+- `Cargo.toml` - Rust package metadata, the `wal-reader` binary target, and dependencies including `raft-engine`, `greptime-proto`, and Arrow IPC/JSON decoding support.
 - `src/main.rs` - CLI argument parsing, `list-namespace` and `inspect-entry` command handling, output formatting, and raft-engine scanning.
 - `src/lib.rs` - reusable decoding helpers for printable strings, GreptimeDB log-store entry payloads, `WalEntry` mutations, and Arrow IPC bulk entries.
 - `tests/cli.rs` - integration tests that create temporary raft-engine directories and validate CLI behavior.
