@@ -9,9 +9,17 @@ use raft_engine_strings::{
     extract_raft_entry_data, extract_readable_strings,
 };
 
-struct Opts {
+enum Command {
+    ListNamespace { path: String },
+    InspectEntry(InspectEntryOpts),
+}
+
+struct InspectEntryOpts {
     path: String,
     namespace: u64,
+    entry_id: Option<u64>,
+    min_entry_id: Option<u64>,
+    max_entry_id: Option<u64>,
     min_len: usize,
     output: Option<String>,
     raw: bool,
@@ -36,9 +44,37 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let opts = parse_args(env::args().skip(1))?;
+    let command = parse_args(env::args().skip(1))?;
+    match command {
+        Command::ListNamespace { path } => run_list_namespace(path),
+        Command::InspectEntry(opts) => run_inspect_entry(opts),
+    }
+}
+
+fn run_list_namespace(path: String) -> Result<(), String> {
     let engine = Engine::open(Config {
-        dir: opts.path,
+        dir: path,
+        ..Default::default()
+    })
+    .map_err(|e| format!("failed to open raft engine: {e}"))?;
+
+    let mut namespaces = engine.raft_groups();
+    namespaces.sort_unstable();
+
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    for namespace in namespaces {
+        writeln!(writer, "{namespace}").map_err(|e| format!("failed to write output: {e}"))?;
+    }
+    writer
+        .flush()
+        .map_err(|e| format!("failed to flush output: {e}"))?;
+    Ok(())
+}
+
+fn run_inspect_entry(opts: InspectEntryOpts) -> Result<(), String> {
+    let engine = Engine::open(Config {
+        dir: opts.path.clone(),
         ..Default::default()
     })
     .map_err(|e| format!("failed to open raft engine: {e}"))?;
@@ -52,14 +88,20 @@ fn run() -> Result<(), String> {
         Box::new(stdout.lock())
     };
 
-    let mut records = Vec::new();
-    let entry_range = match (
+    let actual_entry_range = match (
         engine.first_index(opts.namespace),
         engine.last_index(opts.namespace),
     ) {
         (Some(first), Some(last)) => Some((first, last)),
         _ => None,
     };
+    let entry_range = filter_entry_range(
+        actual_entry_range,
+        opts.entry_id,
+        opts.min_entry_id,
+        opts.max_entry_id,
+    );
+    let mut records = Vec::new();
     records.push(OutputRecord::EntryRange(entry_range));
     if let Some((first, last)) = entry_range {
         collect_raft_entries(
@@ -73,17 +115,19 @@ fn run() -> Result<(), String> {
         )?;
     }
 
-    let mut entry_id = 0;
+    if opts.entry_id.is_none() && opts.min_entry_id.is_none() && opts.max_entry_id.is_none() {
+        let mut entry_id = 0;
 
-    engine
-        .scan_raw_messages(opts.namespace, None, None, false, |key, value| {
-            entry_id += 1;
-            for (field, bytes) in [("key", key), ("value", value)] {
-                records.push(field_record(entry_id, field, bytes, opts.min_len));
-            }
-            true
-        })
-        .map_err(|e| format!("failed to scan namespace {}: {e}", opts.namespace))?;
+        engine
+            .scan_raw_messages(opts.namespace, None, None, false, |key, value| {
+                entry_id += 1;
+                for (field, bytes) in [("key", key), ("value", value)] {
+                    records.push(field_record(entry_id, field, bytes, opts.min_len));
+                }
+                true
+            })
+            .map_err(|e| format!("failed to scan namespace {}: {e}", opts.namespace))?;
+    }
 
     if opts.json {
         write_json(&mut writer, &records).map_err(|e| format!("failed to write output: {e}"))?;
@@ -96,6 +140,26 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("failed to flush output: {e}"))?;
 
     Ok(())
+}
+
+fn filter_entry_range(
+    actual: Option<(u64, u64)>,
+    entry_id: Option<u64>,
+    min_entry_id: Option<u64>,
+    max_entry_id: Option<u64>,
+) -> Option<(u64, u64)> {
+    let (mut first, mut last) = actual?;
+    if let Some(entry_id) = entry_id {
+        first = entry_id;
+        last = entry_id;
+    }
+    if let Some(min_entry_id) = min_entry_id {
+        first = first.max(min_entry_id);
+    }
+    if let Some(max_entry_id) = max_entry_id {
+        last = last.min(max_entry_id);
+    }
+    (first <= last).then_some((first, last))
 }
 
 fn collect_raft_entries(
@@ -224,9 +288,48 @@ fn write_json(writer: &mut dyn Write, records: &[OutputRecord]) -> io::Result<()
     Ok(())
 }
 
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, String> {
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
+    let mut args = args.peekable();
+    let Some(command) = args.next() else {
+        return Err(usage());
+    };
+
+    match command.as_str() {
+        "list-namespace" => parse_list_namespace_args(args),
+        "inspect-entry" => parse_inspect_entry_args(args),
+        "-h" | "--help" => Err(usage()),
+        _ => Err(format!("unknown subcommand: {command}\n{}", usage())),
+    }
+}
+
+fn parse_list_namespace_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
+    let mut path = None;
+    let mut args = args.peekable();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-p" | "--path" => path = Some(next_value(&mut args, &arg, list_namespace_usage())?),
+            "-h" | "--help" => return Err(list_namespace_usage()),
+            _ => {
+                return Err(format!(
+                    "unknown argument: {arg}\n{}",
+                    list_namespace_usage()
+                ));
+            }
+        }
+    }
+
+    Ok(Command::ListNamespace {
+        path: path.ok_or_else(list_namespace_usage)?,
+    })
+}
+
+fn parse_inspect_entry_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut path = None;
     let mut namespace = None;
+    let mut entry_id = None;
+    let mut min_entry_id = None;
+    let mut max_entry_id = None;
     let mut min_len = 4;
     let mut output = None;
     let mut raw = false;
@@ -235,43 +338,87 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, String> {
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-p" | "--path" => path = Some(next_value(&mut args, &arg)?),
+            "-p" | "--path" => path = Some(next_value(&mut args, &arg, inspect_entry_usage())?),
             "-n" | "--namespace" => {
-                namespace = Some(
-                    next_value(&mut args, &arg)?
-                        .parse()
-                        .map_err(|_| format!("namespace must be a u64\n{}", usage()))?,
-                )
+                namespace = Some(parse_u64_value(
+                    next_value(&mut args, &arg, inspect_entry_usage())?,
+                    "namespace",
+                )?)
+            }
+            "--entry-id" => {
+                entry_id = Some(parse_u64_value(
+                    next_value(&mut args, &arg, inspect_entry_usage())?,
+                    "entry-id",
+                )?)
+            }
+            "--min-entry-id" => {
+                min_entry_id = Some(parse_u64_value(
+                    next_value(&mut args, &arg, inspect_entry_usage())?,
+                    "min-entry-id",
+                )?)
+            }
+            "--max-entry-id" => {
+                max_entry_id = Some(parse_u64_value(
+                    next_value(&mut args, &arg, inspect_entry_usage())?,
+                    "max-entry-id",
+                )?)
             }
             "--min-len" => {
-                min_len = next_value(&mut args, &arg)?
+                min_len = next_value(&mut args, &arg, inspect_entry_usage())?
                     .parse()
                     .map_err(|_| "min-len must be an unsigned integer".to_owned())?
             }
-            "-o" | "--output" => output = Some(next_value(&mut args, &arg)?),
+            "-o" | "--output" => output = Some(next_value(&mut args, &arg, inspect_entry_usage())?),
             "--raw" => raw = true,
             "--json" => json = true,
-            "-h" | "--help" => return Err(usage()),
-            _ => return Err(format!("unknown argument: {arg}\n{}", usage())),
+            "-h" | "--help" => return Err(inspect_entry_usage()),
+            _ => {
+                return Err(format!(
+                    "unknown argument: {arg}\n{}",
+                    inspect_entry_usage()
+                ));
+            }
         }
     }
 
-    Ok(Opts {
-        path: path.ok_or_else(usage)?,
-        namespace: namespace.ok_or_else(usage)?,
+    Ok(Command::InspectEntry(InspectEntryOpts {
+        path: path.ok_or_else(inspect_entry_usage)?,
+        namespace: namespace.ok_or_else(inspect_entry_usage)?,
+        entry_id,
+        min_entry_id,
+        max_entry_id,
         min_len,
         output,
         raw,
         json,
-    })
+    }))
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
+fn parse_u64_value(value: String, name: &str) -> Result<u64, String> {
+    value
+        .parse()
+        .map_err(|_| format!("{name} must be a u64\n{}", inspect_entry_usage()))
+}
+
+fn next_value(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+    usage: String,
+) -> Result<String, String> {
     args.next()
-        .ok_or_else(|| format!("missing value for {flag}\n{}", usage()))
+        .ok_or_else(|| format!("missing value for {flag}\n{usage}"))
 }
 
 fn usage() -> String {
-    "usage: raft-engine-strings --path <RAFT_ENGINE_DIR> --namespace <U64> [--min-len <N>] [--output <FILE>] [--raw] [--json]"
+    "usage: raft-engine-strings <SUBCOMMAND> [OPTIONS]\nsubcommands:\n  list-namespace\n  inspect-entry"
+        .to_owned()
+}
+
+fn list_namespace_usage() -> String {
+    "usage: raft-engine-strings list-namespace --path <RAFT_ENGINE_DIR>".to_owned()
+}
+
+fn inspect_entry_usage() -> String {
+    "usage: raft-engine-strings inspect-entry --path <RAFT_ENGINE_DIR> --namespace <U64> [--entry-id <U64>] [--min-entry-id <U64>] [--max-entry-id <U64>] [--min-len <N>] [--output <FILE>] [--raw] [--json]"
         .to_owned()
 }

@@ -1,5 +1,7 @@
+use arrow_flight::{FlightData, utils::flight_data_to_batches};
+use arrow_json::{ArrayWriter, writer::WriterBuilder};
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
-use greptime_proto::v1::{OpType, Value, WalEntry, value};
+use greptime_proto::v1::{BulkWalEntry, OpType, Value, WalEntry, bulk_wal_entry, value};
 use prost::Message;
 use serde_json::{Map, Number};
 
@@ -40,10 +42,45 @@ pub fn decode_wal_entry_pretty_json(bytes: &[u8]) -> Option<String> {
     serde_json::to_string_pretty(&serde_json::json!({
         "wal_entry": {
             "mutations": entry.mutations.iter().map(mutation_to_json).collect::<Vec<_>>(),
-            "bulk_entries": format!("{:?}", entry.bulk_entries),
+            "bulk_entries": entry.bulk_entries.iter().map(bulk_entry_to_json).collect::<Vec<_>>(),
         }
     }))
     .ok()
+}
+
+fn bulk_entry_to_json(entry: &BulkWalEntry) -> serde_json::Value {
+    serde_json::json!({
+        "sequence": entry.sequence,
+        "min_ts": entry.min_ts,
+        "max_ts": entry.max_ts,
+        "timestamp_index": entry.timestamp_index,
+        "rows": decode_bulk_entry_rows(entry),
+    })
+}
+
+fn decode_bulk_entry_rows(entry: &BulkWalEntry) -> serde_json::Value {
+    let Some(bulk_wal_entry::Body::ArrowIpc(ipc)) = &entry.body else {
+        return serde_json::json!({ "error": "missing Arrow IPC body" });
+    };
+    let flight_data = [
+        FlightData::new().with_data_header(ipc.schema.clone()),
+        FlightData::new()
+            .with_data_header(ipc.data_header.clone())
+            .with_data_body(ipc.payload.clone()),
+    ];
+    let Ok(batches) = flight_data_to_batches(&flight_data) else {
+        return serde_json::json!({ "error": "failed to decode Arrow IPC rows" });
+    };
+    let batch_refs = batches.iter().collect::<Vec<_>>();
+    let mut writer: ArrayWriter<Vec<u8>> = WriterBuilder::new()
+        .with_explicit_nulls(true)
+        .with_timestamp_format("%Y-%m-%dT%H:%M:%S%.fZ".to_owned())
+        .build(Vec::new());
+    if writer.write_batches(&batch_refs).is_err() || writer.finish().is_err() {
+        return serde_json::json!({ "error": "failed to encode Arrow rows as JSON" });
+    }
+    serde_json::from_slice(writer.get_ref())
+        .unwrap_or_else(|_| serde_json::json!({ "error": "failed to parse Arrow row JSON" }))
 }
 
 fn mutation_to_json(mutation: &greptime_proto::v1::Mutation) -> serde_json::Value {
@@ -229,10 +266,18 @@ fn push_if_long_enough(out: &mut Vec<String>, current: &mut String, min_len: usi
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_wal_entry_json, encode_hex, extract_log_store_entry_data, extract_raft_entry_data,
-        extract_readable_strings, extract_wal_entry_strings,
+        decode_wal_entry_json, decode_wal_entry_pretty_json, encode_hex,
+        extract_log_store_entry_data, extract_raft_entry_data, extract_readable_strings,
+        extract_wal_entry_strings,
     };
-    use greptime_proto::v1::{Mutation, WalEntry};
+    use std::sync::Arc;
+
+    use arrow_array::{
+        ArrayRef, Float64Array, RecordBatch, StringArray, TimestampMillisecondArray,
+    };
+    use arrow_flight::utils::batches_to_flight_data;
+    use arrow_schema::{DataType, Field, Schema, TimeUnit};
+    use greptime_proto::v1::{ArrowIpc, BulkWalEntry, Mutation, WalEntry, bulk_wal_entry};
     use prost::Message;
 
     #[test]
@@ -301,5 +346,52 @@ mod tests {
         assert!(json.starts_with("{"));
         assert!(json.contains("\"wal_entry\""));
         assert!(json.contains("sequence: 42"));
+    }
+
+    #[test]
+    fn decodes_bulk_wal_entry_rows_as_json() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("host", DataType::Utf8, false),
+            Field::new(
+                "ts",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("value", DataType::Float64, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["host-a", "host-b"])) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(vec![
+                    1_700_000_000_000,
+                    1_700_000_001_000,
+                ])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![Some(1.5), None])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+        let flight_data = batches_to_flight_data(schema.as_ref(), vec![batch]).unwrap();
+        let wal_entry = WalEntry {
+            bulk_entries: vec![BulkWalEntry {
+                sequence: 10,
+                min_ts: 1_700_000_000_000,
+                max_ts: 1_700_000_001_000,
+                timestamp_index: 1,
+                body: Some(bulk_wal_entry::Body::ArrowIpc(ArrowIpc {
+                    schema: flight_data[0].data_header.clone(),
+                    data_header: flight_data[1].data_header.clone(),
+                    payload: flight_data[1].data_body.clone(),
+                })),
+            }],
+            ..Default::default()
+        };
+
+        let json = decode_wal_entry_pretty_json(&wal_entry.encode_to_vec()).unwrap();
+
+        assert!(json.contains(r#""sequence": 10"#), "{json}");
+        assert!(json.contains(r#""host": "host-a""#), "{json}");
+        assert!(json.contains(r#""ts": "2023-11-14T22:13:20Z""#), "{json}");
+        assert!(json.contains(r#""value": null"#), "{json}");
     }
 }

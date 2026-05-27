@@ -10,6 +10,16 @@ use protobuf::{
 use raft::eraftpb::Entry;
 use raft_engine::{Config, Engine, LogBatch, MessageExt};
 
+fn inspect_entry_args(path: &str, namespace: &str) -> Vec<String> {
+    vec![
+        "inspect-entry".to_owned(),
+        "--path".to_owned(),
+        path.to_owned(),
+        "--namespace".to_owned(),
+        namespace.to_owned(),
+    ]
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 struct TestEntry {
     index: u64,
@@ -194,14 +204,8 @@ fn prints_strings_from_requested_namespace() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args([
-            "--path",
-            dir.path().to_str().unwrap(),
-            "--namespace",
-            "42",
-            "--min-len",
-            "4",
-        ])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
+        .args(["--min-len", "4"])
         .output()
         .unwrap();
 
@@ -235,7 +239,7 @@ fn prints_plain_text_by_default_without_csv_escaping() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -266,13 +270,8 @@ fn prints_json_when_requested() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args([
-            "--path",
-            dir.path().to_str().unwrap(),
-            "--namespace",
-            "42",
-            "--json",
-        ])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
+        .arg("--json")
         .output()
         .unwrap();
 
@@ -317,7 +316,7 @@ fn prints_entry_id_range_for_namespace() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -372,7 +371,7 @@ fn prints_raft_entry_data_from_entry_range() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -422,7 +421,7 @@ fn decodes_greptimedb_log_store_entry_data_from_entry_range() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -492,7 +491,7 @@ fn plain_text_prints_wal_mutation_rows_as_json_objects_by_default() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -540,13 +539,8 @@ fn raw_prints_wal_entry_debug_content() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args([
-            "--path",
-            dir.path().to_str().unwrap(),
-            "--namespace",
-            "42",
-            "--raw",
-        ])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
+        .arg("--raw")
         .output()
         .unwrap();
 
@@ -564,6 +558,7 @@ fn rejects_removed_pretty_print_flag() {
         .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
         .args([
+            "inspect-entry",
             "--path",
             dir.path().to_str().unwrap(),
             "--namespace",
@@ -599,14 +594,11 @@ fn writes_strings_with_entry_id_to_output_file() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args([
-            "--path",
+        .args(inspect_entry_args(
             dir.path().join("engine").to_str().unwrap(),
-            "--namespace",
             "42",
-            "--output",
-            output_path.to_str().unwrap(),
-        ])
+        ))
+        .args(["--output", output_path.to_str().unwrap()])
         .output()
         .unwrap();
 
@@ -639,7 +631,7 @@ fn prints_hex_when_field_has_no_readable_strings() {
     drop(engine);
 
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "42"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
 
@@ -658,7 +650,7 @@ fn reports_namespace_as_u64() {
         .tempdir()
         .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
-        .args(["--path", dir.path().to_str().unwrap(), "--namespace", "-1"])
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "-1"))
         .output()
         .unwrap();
 
@@ -666,4 +658,133 @@ fn reports_namespace_as_u64() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("namespace must be a u64"));
     assert!(stderr.contains("--namespace <U64>"));
+}
+
+#[test]
+fn list_namespace_prints_available_namespaces() {
+    let dir = tempfile::Builder::new()
+        .prefix("raft-engine-strings-cli")
+        .tempdir()
+        .unwrap();
+    let cfg = Config {
+        dir: dir.path().to_str().unwrap().to_owned(),
+        ..Default::default()
+    };
+    let engine = Engine::open(cfg).unwrap();
+    let mut batch = LogBatch::default();
+    batch.put(42, b"key".to_vec(), b"value".to_vec()).unwrap();
+    batch.put(7, b"key".to_vec(), b"value".to_vec()).unwrap();
+    engine.write(&mut batch, true).unwrap();
+    drop(engine);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+        .args(["list-namespace", "--path", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout, "7\n42\n");
+}
+
+#[test]
+fn inspect_entry_filters_raft_entries_by_entry_id() {
+    let dir = tempfile::Builder::new()
+        .prefix("raft-engine-strings-cli")
+        .tempdir()
+        .unwrap();
+    let cfg = Config {
+        dir: dir.path().to_str().unwrap().to_owned(),
+        ..Default::default()
+    };
+    let engine = Engine::open(cfg).unwrap();
+    let mut batch = LogBatch::default();
+    batch
+        .add_entries::<EntryExt>(
+            42,
+            &[
+                Entry {
+                    index: 10,
+                    data: b"entry ten".to_vec().into(),
+                    ..Default::default()
+                },
+                Entry {
+                    index: 11,
+                    data: b"entry eleven".to_vec().into(),
+                    ..Default::default()
+                },
+                Entry {
+                    index: 12,
+                    data: b"entry twelve".to_vec().into(),
+                    ..Default::default()
+                },
+            ],
+        )
+        .unwrap();
+    engine.write(&mut batch, true).unwrap();
+    drop(engine);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
+        .args(["--entry-id", "11"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("namespace: 42, entry id range: 11 ~ 11"));
+    assert!(!stdout.contains("Entry ID:     10"));
+    assert!(stdout.contains("Entry ID:     11"));
+    assert!(!stdout.contains("Entry ID:     12"));
+}
+
+#[test]
+fn inspect_entry_filters_raft_entries_by_min_and_max_entry_id() {
+    let dir = tempfile::Builder::new()
+        .prefix("raft-engine-strings-cli")
+        .tempdir()
+        .unwrap();
+    let cfg = Config {
+        dir: dir.path().to_str().unwrap().to_owned(),
+        ..Default::default()
+    };
+    let engine = Engine::open(cfg).unwrap();
+    let mut batch = LogBatch::default();
+    batch
+        .add_entries::<EntryExt>(
+            42,
+            &[
+                Entry {
+                    index: 10,
+                    data: b"entry ten".to_vec().into(),
+                    ..Default::default()
+                },
+                Entry {
+                    index: 11,
+                    data: b"entry eleven".to_vec().into(),
+                    ..Default::default()
+                },
+                Entry {
+                    index: 12,
+                    data: b"entry twelve".to_vec().into(),
+                    ..Default::default()
+                },
+            ],
+        )
+        .unwrap();
+    engine.write(&mut batch, true).unwrap();
+    drop(engine);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+        .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
+        .args(["--min-entry-id", "11", "--max-entry-id", "12"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("namespace: 42, entry id range: 11 ~ 12"));
+    assert!(!stdout.contains("Entry ID:     10"));
+    assert!(stdout.contains("Entry ID:     11"));
+    assert!(stdout.contains("Entry ID:     12"));
 }
