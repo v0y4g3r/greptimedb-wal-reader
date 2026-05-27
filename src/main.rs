@@ -410,15 +410,15 @@ fn next_value(
 }
 
 fn usage() -> String {
-    "usage: raft-engine-strings <SUBCOMMAND> [OPTIONS]\nsubcommands:\n  list-namespace\n  inspect-entry"
+    "usage: wal-reader <SUBCOMMAND> [OPTIONS]\nsubcommands:\n  list-namespace\n  inspect-entry"
         .to_owned()
 }
 
 fn list_namespace_usage() -> String {
-    "usage: raft-engine-strings list-namespace --path <RAFT_ENGINE_DIR>".to_owned()
+    "usage: wal-reader list-namespace --path <RAFT_ENGINE_DIR>".to_owned()
 }
 
 fn inspect_entry_usage() -> String {
-    "usage: raft-engine-strings inspect-entry --path <RAFT_ENGINE_DIR> --namespace <U64> [--entry-id <U64>] [--min-entry-id <U64>] [--max-entry-id <U64>] [--min-len <N>] [--output <FILE>] [--raw] [--json]"
+    "usage: wal-reader inspect-entry --path <RAFT_ENGINE_DIR> --namespace <U64> [--entry-id <U64>] [--min-entry-id <U64>] [--max-entry-id <U64>] [--min-len <N>] [--output <FILE>] [--raw] [--json]"
         .to_owned()
 }

@@ -3,8 +3,13 @@ name = "raft-engine-strings"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "wal-reader"
+path = "src/main.rs"
+
 [dependencies]
 arrow-flight = "58.3"
+arrow-ipc = { version = "58.3", features = ["lz4"] }
 arrow-json = "58.3"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 greptime-proto = { git = "https://github.com/GreptimeTeam/greptime-proto" }

@@ -181,7 +181,7 @@ impl MessageExt for LogStoreEntryExt {
 #[test]
 fn prints_strings_from_requested_namespace() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -203,7 +203,7 @@ fn prints_strings_from_requested_namespace() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .args(["--min-len", "4"])
         .output()
@@ -223,7 +223,7 @@ fn prints_strings_from_requested_namespace() {
 #[test]
 fn prints_plain_text_by_default_without_csv_escaping() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -238,7 +238,7 @@ fn prints_plain_text_by_default_without_csv_escaping() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -254,7 +254,7 @@ fn prints_plain_text_by_default_without_csv_escaping() {
 #[test]
 fn prints_json_when_requested() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -269,7 +269,7 @@ fn prints_json_when_requested() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .arg("--json")
         .output()
@@ -289,7 +289,7 @@ fn prints_json_when_requested() {
 #[test]
 fn prints_entry_id_range_for_namespace() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -315,7 +315,7 @@ fn prints_entry_id_range_for_namespace() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -328,7 +328,7 @@ fn prints_entry_id_range_for_namespace() {
 #[test]
 fn prints_raft_entry_data_from_entry_range() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -370,7 +370,7 @@ fn prints_raft_entry_data_from_entry_range() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -390,7 +390,7 @@ fn prints_raft_entry_data_from_entry_range() {
 #[test]
 fn decodes_greptimedb_log_store_entry_data_from_entry_range() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -420,7 +420,7 @@ fn decodes_greptimedb_log_store_entry_data_from_entry_range() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -436,7 +436,7 @@ fn decodes_greptimedb_log_store_entry_data_from_entry_range() {
 #[test]
 fn plain_text_prints_wal_mutation_rows_as_json_objects_by_default() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -490,7 +490,7 @@ fn plain_text_prints_wal_mutation_rows_as_json_objects_by_default() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -508,7 +508,7 @@ fn plain_text_prints_wal_mutation_rows_as_json_objects_by_default() {
 #[test]
 fn raw_prints_wal_entry_debug_content() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -538,7 +538,7 @@ fn raw_prints_wal_entry_debug_content() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .arg("--raw")
         .output()
@@ -553,10 +553,10 @@ fn raw_prints_wal_entry_debug_content() {
 #[test]
 fn rejects_removed_pretty_print_flag() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args([
             "inspect-entry",
             "--path",
@@ -577,7 +577,7 @@ fn rejects_removed_pretty_print_flag() {
 #[test]
 fn writes_strings_with_entry_id_to_output_file() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let output_path = dir.path().join("strings.txt");
@@ -593,7 +593,7 @@ fn writes_strings_with_entry_id_to_output_file() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(
             dir.path().join("engine").to_str().unwrap(),
             "42",
@@ -615,7 +615,7 @@ fn writes_strings_with_entry_id_to_output_file() {
 #[test]
 fn prints_hex_when_field_has_no_readable_strings() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -630,7 +630,7 @@ fn prints_hex_when_field_has_no_readable_strings() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .output()
         .unwrap();
@@ -646,10 +646,10 @@ fn prints_hex_when_field_has_no_readable_strings() {
 #[test]
 fn reports_namespace_as_u64() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "-1"))
         .output()
         .unwrap();
@@ -663,7 +663,7 @@ fn reports_namespace_as_u64() {
 #[test]
 fn list_namespace_prints_available_namespaces() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -677,7 +677,7 @@ fn list_namespace_prints_available_namespaces() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(["list-namespace", "--path", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
@@ -690,7 +690,7 @@ fn list_namespace_prints_available_namespaces() {
 #[test]
 fn inspect_entry_filters_raft_entries_by_entry_id() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -724,7 +724,7 @@ fn inspect_entry_filters_raft_entries_by_entry_id() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .args(["--entry-id", "11"])
         .output()
@@ -741,7 +741,7 @@ fn inspect_entry_filters_raft_entries_by_entry_id() {
 #[test]
 fn inspect_entry_filters_raft_entries_by_min_and_max_entry_id() {
     let dir = tempfile::Builder::new()
-        .prefix("raft-engine-strings-cli")
+        .prefix("wal-reader-cli")
         .tempdir()
         .unwrap();
     let cfg = Config {
@@ -775,7 +775,7 @@ fn inspect_entry_filters_raft_entries_by_min_and_max_entry_id() {
     engine.write(&mut batch, true).unwrap();
     drop(engine);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_raft-engine-strings"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wal-reader"))
         .args(inspect_entry_args(dir.path().to_str().unwrap(), "42"))
         .args(["--min-entry-id", "11", "--max-entry-id", "12"])
         .output()

@@ -275,7 +275,11 @@ mod tests {
     use arrow_array::{
         ArrayRef, Float64Array, RecordBatch, StringArray, TimestampMillisecondArray,
     };
-    use arrow_flight::utils::batches_to_flight_data;
+    use arrow_flight::{FlightData, SchemaAsIpc, utils::batches_to_flight_data};
+    use arrow_ipc::CompressionType;
+    use arrow_ipc::writer::{
+        CompressionContext, DictionaryTracker, IpcDataGenerator, IpcWriteOptions,
+    };
     use arrow_schema::{DataType, Field, Schema, TimeUnit};
     use greptime_proto::v1::{ArrowIpc, BulkWalEntry, Mutation, WalEntry, bulk_wal_entry};
     use prost::Message;
@@ -393,5 +397,65 @@ mod tests {
         assert!(json.contains(r#""host": "host-a""#), "{json}");
         assert!(json.contains(r#""ts": "2023-11-14T22:13:20Z""#), "{json}");
         assert!(json.contains(r#""value": null"#), "{json}");
+    }
+
+    #[test]
+    fn decodes_lz4_compressed_bulk_wal_entry_rows_as_json() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(
+                "greptime_timestamp",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("greptime_value", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(TimestampMillisecondArray::from(vec![1_735_689_600_000])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![1.0])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+        let options = IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::LZ4_FRAME))
+            .unwrap();
+        let schema_data = FlightData::from(SchemaAsIpc::new(schema.as_ref(), &options));
+        let data_gen = IpcDataGenerator::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+        let mut compression_context = CompressionContext::default();
+        let (dictionaries, batch_data) = data_gen
+            .encode(
+                &batch,
+                &mut dictionary_tracker,
+                &options,
+                &mut compression_context,
+            )
+            .unwrap();
+        assert!(dictionaries.is_empty());
+        let batch_data = FlightData::from(batch_data);
+        let wal_entry = WalEntry {
+            bulk_entries: vec![BulkWalEntry {
+                sequence: 10,
+                min_ts: 1_735_689_600_000,
+                max_ts: 1_735_689_600_000,
+                timestamp_index: 0,
+                body: Some(bulk_wal_entry::Body::ArrowIpc(ArrowIpc {
+                    schema: schema_data.data_header,
+                    data_header: batch_data.data_header,
+                    payload: batch_data.data_body,
+                })),
+            }],
+            ..Default::default()
+        };
+
+        let json = decode_wal_entry_pretty_json(&wal_entry.encode_to_vec()).unwrap();
+
+        assert!(
+            json.contains(r#""greptime_timestamp": "2025-01-01T00:00:00Z""#),
+            "{json}"
+        );
+        assert!(json.contains(r#""greptime_value": 1.0"#), "{json}");
+        assert!(!json.contains("failed to decode Arrow IPC rows"), "{json}");
     }
 }
