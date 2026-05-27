@@ -14,7 +14,18 @@ struct Opts {
     namespace: u64,
     min_len: usize,
     output: Option<String>,
-    pretty_print: bool,
+    raw: bool,
+    json: bool,
+}
+
+enum OutputRecord {
+    EntryRange(Option<(u64, u64)>),
+    Field {
+        entry_id: u64,
+        field: String,
+        precise: bool,
+        content: String,
+    },
 }
 
 fn main() {
@@ -41,37 +52,44 @@ fn run() -> Result<(), String> {
         Box::new(stdout.lock())
     };
 
-    let entry_range = write_entry_range(&mut writer, &engine, opts.namespace)
-        .map_err(|e| format!("failed to write entry range: {e}"))?;
+    let mut records = Vec::new();
+    let entry_range = match (
+        engine.first_index(opts.namespace),
+        engine.last_index(opts.namespace),
+    ) {
+        (Some(first), Some(last)) => Some((first, last)),
+        _ => None,
+    };
+    records.push(OutputRecord::EntryRange(entry_range));
     if let Some((first, last)) = entry_range {
-        write_raft_entries(
-            &mut writer,
+        collect_raft_entries(
+            &mut records,
             &engine,
             opts.namespace,
             first,
             last,
             opts.min_len,
-            opts.pretty_print,
+            opts.raw,
         )?;
     }
 
     let mut entry_id = 0;
-    let mut write_error = None;
 
     engine
         .scan_raw_messages(opts.namespace, None, None, false, |key, value| {
             entry_id += 1;
             for (field, bytes) in [("key", key), ("value", value)] {
-                if let Err(e) = write_field(&mut writer, entry_id, field, bytes, opts.min_len) {
-                    write_error = Some(e.to_string());
-                    return false;
-                }
+                records.push(field_record(entry_id, field, bytes, opts.min_len));
             }
             true
         })
         .map_err(|e| format!("failed to scan namespace {}: {e}", opts.namespace))?;
-    if let Some(e) = write_error {
-        return Err(format!("failed to write output: {e}"));
+
+    if opts.json {
+        write_json(&mut writer, &records).map_err(|e| format!("failed to write output: {e}"))?;
+    } else {
+        write_plain_text(&mut writer, opts.namespace, &records)
+            .map_err(|e| format!("failed to write output: {e}"))?;
     }
     writer
         .flush()
@@ -80,31 +98,14 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn write_entry_range(
-    writer: &mut dyn Write,
-    engine: &Engine,
-    namespace: u64,
-) -> io::Result<Option<(u64, u64)>> {
-    match (engine.first_index(namespace), engine.last_index(namespace)) {
-        (Some(first), Some(last)) => {
-            writeln!(writer, "entry_range\t{first}\t{last}")?;
-            Ok(Some((first, last)))
-        }
-        _ => {
-            writeln!(writer, "entry_range\tnone")?;
-            Ok(None)
-        }
-    }
-}
-
-fn write_raft_entries(
-    writer: &mut dyn Write,
+fn collect_raft_entries(
+    records: &mut Vec<OutputRecord>,
     engine: &Engine,
     namespace: u64,
     first: u64,
     last: u64,
     min_len: usize,
-    pretty_print: bool,
+    raw: bool,
 ) -> Result<(), String> {
     for index in first..=last {
         let Some(raw_entry) = engine
@@ -113,67 +114,113 @@ fn write_raft_entries(
         else {
             continue;
         };
-        write_entry_field(writer, index, &raw_entry, min_len, pretty_print)
-            .map_err(|e| format!("failed to write raft entry {index}: {e}"))?;
+        records.push(entry_field_record(index, &raw_entry, min_len, raw));
     }
     Ok(())
 }
 
-fn write_entry_field(
-    writer: &mut dyn Write,
-    entry_id: u64,
-    raw_entry: &[u8],
-    min_len: usize,
-    pretty_print: bool,
-) -> io::Result<()> {
+fn entry_field_record(entry_id: u64, raw_entry: &[u8], min_len: usize, raw: bool) -> OutputRecord {
     if let Some(data) =
         extract_log_store_entry_data(raw_entry).or_else(|| extract_raft_entry_data(raw_entry))
     {
-        let json = if pretty_print {
-            decode_wal_entry_pretty_json(data)
-        } else {
+        let json = if raw {
             decode_wal_entry_json(data)
+        } else {
+            decode_wal_entry_pretty_json(data)
         };
         if let Some(json) = json {
-            writeln!(writer, "{entry_id}\tentry\ttrue\t{json}")?;
-            return Ok(());
+            return OutputRecord::Field {
+                entry_id,
+                field: "entry".to_owned(),
+                precise: true,
+                content: json,
+            };
         }
     }
-    write_field(writer, entry_id, "entry", raw_entry, min_len)
+    field_record(entry_id, "entry", raw_entry, min_len)
 }
 
-fn write_field(
-    writer: &mut dyn Write,
-    entry_id: u64,
-    field: &str,
-    bytes: &[u8],
-    min_len: usize,
-) -> io::Result<()> {
+fn field_record(entry_id: u64, field: &str, bytes: &[u8], min_len: usize) -> OutputRecord {
     let strings = extract_readable_strings(bytes, min_len);
-    write_strings_or_hex(writer, entry_id, field, false, bytes, strings)
+    if strings.is_empty() {
+        return OutputRecord::Field {
+            entry_id,
+            field: format!("{field}_hex"),
+            precise: false,
+            content: encode_hex(bytes),
+        };
+    }
+    OutputRecord::Field {
+        entry_id,
+        field: field.to_owned(),
+        precise: false,
+        content: strings.join(" | "),
+    }
 }
 
-fn write_strings_or_hex(
+fn write_plain_text(
     writer: &mut dyn Write,
-    entry_id: u64,
-    field: &str,
-    precise: bool,
-    bytes: &[u8],
-    strings: Vec<String>,
+    namespace: u64,
+    records: &[OutputRecord],
 ) -> io::Result<()> {
-    if strings.is_empty() {
-        writeln!(
+    let range = records.iter().find_map(|record| match record {
+        OutputRecord::EntryRange(range) => Some(*range),
+        OutputRecord::Field { .. } => None,
+    });
+    match range.flatten() {
+        Some((first, last)) => writeln!(
             writer,
-            "{entry_id}\t{field}_hex\t{precise}\t{}",
-            encode_hex(bytes)
-        )?;
-        return Ok(());
+            "namespace: {namespace}, entry id range: {first} ~ {last}"
+        )?,
+        None => writeln!(writer, "namespace: {namespace}, entry id range: none")?,
     }
-    writeln!(
-        writer,
-        "{entry_id}\t{field}\t{precise}\t{}",
-        strings.join(" | ")
-    )?;
+
+    for record in records {
+        if let OutputRecord::Field {
+            entry_id,
+            field,
+            precise,
+            content,
+        } = record
+        {
+            writeln!(writer, "Entry ID:     {entry_id}")?;
+            writeln!(writer, "Message type: {field}")?;
+            writeln!(writer, "Precise:      {precise}")?;
+            writeln!(writer, "Content:")?;
+            writeln!(writer, "{content}")?;
+            writeln!(writer, "---")?;
+        }
+    }
+    Ok(())
+}
+
+fn write_json(writer: &mut dyn Write, records: &[OutputRecord]) -> io::Result<()> {
+    let values = records
+        .iter()
+        .map(|record| match record {
+            OutputRecord::EntryRange(Some((first, last))) => serde_json::json!({
+                "type": "entry_range",
+                "range": { "first": first, "last": last },
+            }),
+            OutputRecord::EntryRange(None) => serde_json::json!({
+                "type": "entry_range",
+                "range": null,
+            }),
+            OutputRecord::Field {
+                entry_id,
+                field,
+                precise,
+                content,
+            } => serde_json::json!({
+                "type": "field",
+                "entry_id": entry_id,
+                "field": field,
+                "precise": precise,
+                "content": content,
+            }),
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_writer_pretty(writer, &values)?;
     Ok(())
 }
 
@@ -182,7 +229,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, String> {
     let mut namespace = None;
     let mut min_len = 4;
     let mut output = None;
-    let mut pretty_print = false;
+    let mut raw = false;
+    let mut json = false;
     let mut args = args.peekable();
 
     while let Some(arg) = args.next() {
@@ -201,7 +249,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, String> {
                     .map_err(|_| "min-len must be an unsigned integer".to_owned())?
             }
             "-o" | "--output" => output = Some(next_value(&mut args, &arg)?),
-            "--pretty-print" => pretty_print = true,
+            "--raw" => raw = true,
+            "--json" => json = true,
             "-h" | "--help" => return Err(usage()),
             _ => return Err(format!("unknown argument: {arg}\n{}", usage())),
         }
@@ -212,7 +261,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, String> {
         namespace: namespace.ok_or_else(usage)?,
         min_len,
         output,
-        pretty_print,
+        raw,
+        json,
     })
 }
 
@@ -222,6 +272,6 @@ fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Str
 }
 
 fn usage() -> String {
-    "usage: raft-engine-strings --path <RAFT_ENGINE_DIR> --namespace <U64> [--min-len <N>] [--output <FILE>] [--pretty-print]"
+    "usage: raft-engine-strings --path <RAFT_ENGINE_DIR> --namespace <U64> [--min-len <N>] [--output <FILE>] [--raw] [--json]"
         .to_owned()
 }

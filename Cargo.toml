@@ -7,7 +7,7 @@ edition = "2024"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 greptime-proto = { git = "https://github.com/GreptimeTeam/greptime-proto" }
 prost = "0.14"
-raft-engine = { path = "raft-engine" }
+raft-engine = { git = "https://github.com/v0y4g3r/raft-engine", branch = "expose-raw-entry-bytes" }
 serde_json = "1.0"
 
 [dev-dependencies]
